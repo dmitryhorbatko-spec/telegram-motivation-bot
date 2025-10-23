@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import requests
 from openai import OpenAI
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+BOT_TOKEN = os.environ["8393722764:AAEkwucDBmtv-KaqfeL9-qbwvFHs3HqvkM8"]
 CHAT_ID = os.environ["CHAT_ID"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 SEND_HOUR = int(os.environ.get("SEND_HOUR", "9"))
