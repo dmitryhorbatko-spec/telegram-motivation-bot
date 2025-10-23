@@ -5,8 +5,8 @@ import requests
 from openai import OpenAI
 
 BOT_TOKEN = os.environ["8393722764:AAEkwucDBmtv-KaqfeL9-qbwvFHs3HqvkM8"]
-CHAT_ID = os.environ["CHAT_ID"]
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+CHAT_ID = os.environ["394507711"]
+OPENAI_API_KEY = os.environ["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"]
 SEND_HOUR = int(os.environ.get("SEND_HOUR", "9"))
 TZ_NAME = os.environ.get("TZ", "Europe/Kyiv")
 
