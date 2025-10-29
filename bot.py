@@ -10,7 +10,7 @@ CHAT_ID = os.environ["CHAT_ID"]              # числовой chat_id
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 SEND_HOUR = int(os.environ.get("SEND_HOUR", "9"))       # 9 = 09:00
 TZ_NAME = os.environ.get("TZ", "Europe/Kyiv")
-MINUTE_WINDOW = int(os.environ.get("MINUTE_WINDOW", "10"))  # окно в минутах, по умолчанию 10
+MINUTE_WINDOW = int(os.environ.get("MINUTE_WINDOW", "59"))  # окно в минутах, по умолчанию 10
 
 # ---- OpenAI ----
 client = OpenAI(api_key=OPENAI_API_KEY)
