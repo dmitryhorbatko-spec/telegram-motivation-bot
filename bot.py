@@ -1,25 +1,60 @@
-import os, json, sys, re, random
+import os, sys, re, json, random
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
 from openai import OpenAI
-from pathlib import Path
 
 # ---- ENV ----
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["CHAT_ID"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]          # токен бота из @BotFather (через Secrets)
+CHAT_ID = os.environ["CHAT_ID"]              # числовой chat_id
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-SEND_HOUR = int(os.environ.get("SEND_HOUR", "9"))
+SEND_HOUR = int(os.environ.get("SEND_HOUR", "9"))       # 9 = 09:00
 TZ_NAME = os.environ.get("TZ", "Europe/Kyiv")
-MINUTE_WINDOW = int(os.environ.get("MINUTE_WINDOW", "59"))
+MINUTE_WINDOW = int(os.environ.get("MINUTE_WINDOW", "59"))  # окно в минутах
+HISTORY_FILE = Path(os.environ.get("HISTORY_FILE", "sent_history.json"))
+HISTORY_LIMIT = int(os.environ.get("HISTORY_LIMIT", "200"))
 
 # ---- OpenAI ----
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ---- История (для анти-повторов) ----
-HISTORY_FILE = Path(os.environ.get("HISTORY_FILE", "sent_history.json"))
-HISTORY_LIMIT = 200  # сколько последних фраз помнить
+# --- Новый системный промпт: коротко, спокойно, без коуч-тонов ---
+SYSTEM_PROMPT = (
+    "Пиши ОДНО короткое поддерживающее утверждение на русском (5–9 слов). "
+    "Спокойный тёплый тон. НИКАКИХ призывов к действию, пафоса, слов 'сегодня', "
+    "'вперёд/вперед', 'сделай/сделать', 'не упусти', 'шаг'. "
+    "Без восклицаний, кавычек и эмодзи. Всегда заканчивай точкой. "
+    "Можно от первого лица ('я считаю/верю/знаю'), можно от второго ('у тебя...').\n\n"
+    "Примеры стиля (НЕ КОПИРУЙ их дословно, используй только как ориентир):\n"
+    "считаю, что у тебя есть шанс на лучшую жизнь.\n"
+    "таких как ты нет больше.\n"
+    "у тебя всё получится.\n"
+    "\nЗапрещено дословно повторять любую строку из этих примеров."
+)
 
+# Запрещённые слова/шаблоны (чтобы отсекать 'коучевый' тон)
+FORBIDDEN = [
+    "сегодня", "вперед", "вперёд", "сделай", "сделать", "давай", "шаг",
+    "не упусти", "отличный день", "классное", "вдохновляющее"
+]
+
+# Штампы, которые часто лезут (баним дословно и близкие)
+BAN_PHRASES = [
+    "у тебя всё получится",
+    "я верю, что у тебя всё получится",
+    "я верю, что ты справишься",
+    "я знаю, что ты справишься",
+    "ты справишься",
+]
+
+def now_local():
+    return __import__("datetime").datetime.now(ZoneInfo(TZ_NAME))
+
+def is_send_time(dt):
+    # Отправляем только в окне HH:00..HH:(MINUTE_WINDOW-1)
+    return dt.hour == SEND_HOUR and 0 <= dt.minute < MINUTE_WINDOW
+
+# ---------- Анти-дубликаторы ----------
 def load_history():
     if HISTORY_FILE.exists():
         try:
@@ -30,44 +65,9 @@ def load_history():
 
 def save_history(history):
     try:
-        HISTORY_FILE.write_text(json.dumps(history[-HISTORY_LIMIT:], ensure_ascii=False, indent=0), encoding="utf-8")
+        HISTORY_FILE.write_text(json.dumps(history[-HISTORY_LIMIT:], ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
-
-# --- Системный промпт (убрали шаблон "у тебя всё получится") ---
-SYSTEM_PROMPT = (
-    "Пиши ОДНО короткое поддерживающее утверждение на русском (5–9 слов). "
-    "Спокойный тёплый тон. НИКАКИХ призывов к действию, пафоса, слов 'сегодня', "
-    "'вперёд/вперед', 'сделай/сделать', 'не упусти', 'шаг'. "
-    "Без восклицаний, кавычек и эмодзи. Всегда заканчивай точкой. "
-    "Можно от первого лица ('я верю/знаю/считаю'), можно от второго ('у тебя...').\n\n"
-    "Примеры стиля (это только примеры, не копируй их дословно):\n"
-    "я на твоей стороне, даже когда тихо.\n"
-    "ты важен, даже если сомневаешься.\n"
-    "я вижу в тебе спокойную силу.\n"
-)
-
-# --- Запрещённые слова/шаблоны и заезженные конструкции ---
-FORBIDDEN = [
-    "сегодня","вперед","вперёд","сделай","сделать","давай","шаг","не упусти",
-    "отличный день","классное","вдохновляющее"
-]
-# Точные или почти точные штампы, которые часто лезут
-BAN_PHRASES = [
-    "у тебя всё получится",
-    "я верю, что у тебя всё получится",
-    "ты справишься",
-    "я верю, что ты справишься",
-    "я знаю, что ты справишься",
-]
-
-def now_local():
-    from datetime import datetime as dt
-    return dt.now(ZoneInfo(TZ_NAME))
-
-def is_send_time(dt):
-    # отправляем только в окне HH:00..HH:MINUTE_WINDOW-1
-    return dt.hour == SEND_HOUR and 0 <= dt.minute < MINUTE_WINDOW
 
 def normalize(text: str) -> str:
     t = text.lower().strip()
@@ -80,7 +80,6 @@ def ngrams(words, n=2):
     return set(tuple(words[i:i+n]) for i in range(len(words)-n+1)) if len(words) >= n else set()
 
 def too_similar(a: str, b: str, thr: float = 0.65) -> bool:
-    # Jaccard по биграммам слов
     aw = normalize(a).strip(".").split()
     bw = normalize(b).strip(".").split()
     A = ngrams(aw, 2)
@@ -104,13 +103,12 @@ def is_banned(text: str) -> bool:
     t = normalize(text).rstrip(".")
     if any(t == normalize(p) or t.startswith(normalize(p)) for p in BAN_PHRASES):
         return True
-    # простая проверка на штампы типа "у тебя всё получится" / "ты справишься"
     if re.search(r"\b(получится|справишься)\b", t):
         return True
     return False
 
-def generate_candidates(n: int = 12) -> list:
-    # Просим модель выдать список строк, по одной на строку
+# ---------- Генерация ----------
+def generate_candidates(n: int = 12) -> list[str]:
     user_prompt = (
         f"Предложи {n} разных вариантов, по одному на строку. "
         "Не нумеруй и не добавляй лишних символов."
@@ -125,11 +123,10 @@ def generate_candidates(n: int = 12) -> list:
         temperature=1.0,
         top_p=0.9,
         presence_penalty=0.7,
-        frequency_penalty=0.7,
+        frequency_penalty=0.7
     )
     text = resp.choices[0].message.content.strip()
     lines = [re.sub(r"^\s*[-\d\.\)]\s*", "", l).strip() for l in text.splitlines() if l.strip()]
-    # Санитайз и точка в конце
     cleaned = []
     for l in lines:
         l = l.replace("#", "").strip('«»"“”‘’').strip()
@@ -138,11 +135,10 @@ def generate_candidates(n: int = 12) -> list:
         cleaned.append(l)
     return cleaned
 
-def pick_fresh(candidates: list, history: list) -> str | None:
-    # фильтруем по стилю, бану, новизне по отношению к истории и внутри пакета
+def pick_fresh(candidates: list[str], history: list[str]) -> str | None:
     ok = []
     for c in candidates:
-        if not conforms_style(c): 
+        if not conforms_style(c):
             continue
         if is_banned(c):
             continue
@@ -150,7 +146,6 @@ def pick_fresh(candidates: list, history: list) -> str | None:
             continue
         ok.append(c)
 
-    # Избавимся от взаимно похожих внутри пакета
     unique = []
     for c in ok:
         if any(too_similar(c, u) for u in unique):
@@ -159,8 +154,7 @@ def pick_fresh(candidates: list, history: list) -> str | None:
 
     return random.choice(unique) if unique else None
 
-def fallback(history: list) -> str:
-    # Ручной генератор безопасной фразы, если модель не справилась
+def fallback(history: list[str]) -> str:
     templates = [
         "я рядом, даже если молчишь.",
         "твоя тишина для меня понятна.",
@@ -177,7 +171,7 @@ def fallback(history: list) -> str:
 
 def generate_text() -> str:
     history = load_history()
-    for _ in range(2):  # две попытки с батчем
+    for _ in range(2):  # две попытки пакетной генерации
         cand = generate_candidates(12)
         choice = pick_fresh(cand, history)
         if choice:
@@ -190,6 +184,7 @@ def generate_text() -> str:
     save_history(history)
     return text
 
+# ---------- Отправка ----------
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     r = requests.post(url, data={"chat_id": CHAT_ID, "text": text})
